@@ -1,0 +1,6 @@
+#ignore data
+data/
+
+# Ignore Python cache
+__pycache__/
+*.pyc
