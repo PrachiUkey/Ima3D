@@ -1,5 +1,6 @@
 #ignore data
 data/
+outputs/
 
 # Ignore Python cache
 __pycache__/
