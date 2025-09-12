@@ -1,95 +1,44 @@
-# src/run.py
-
-"""
-Run training + inference pipeline for Image → 3D Mesh latent comparison.
-
-- Loads latest checkpoint if available.
-- Runs a single inference sample to check latent similarity.
-"""
-
-import os
 import torch
+import torch.nn.functional as F
 from src.models.image_encoder import ImageEncoder
 from src.models.mesh_encoder import MeshEncoder
-from src.utils.mesh_utils import load_obj_as_pointcloud
+from src.dataset.image_mesh_dataset import get_sample_image_mesh
 
-# -----------------------------
-# Configs
-# -----------------------------
-NUM_POINTS = 5000
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# Parameters
 LATENT_DIM = 128
-CHECKPOINT_PATH = "outputs/checkpoints/epoch_4.pth"  # Change if needed
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+IMG_SIZE = 128
+NUM_POINTS = 5000
 
-# Example data for inference
-IMAGE_PATH = "data/img/bed/0001.png"  # Provide your image path
-MESH_PATH = "data/model/bed/bed_0/model.obj"  # Provide your mesh path
+# Initialize models
+image_encoder = ImageEncoder(latent_dim=LATENT_DIM, img_size=IMG_SIZE).to(DEVICE)
+mesh_encoder = MeshEncoder(num_points=NUM_POINTS, latent_dim=LATENT_DIM).to(DEVICE)
 
-# -----------------------------
-# Helpers
-# -----------------------------
-def preprocess_image(img_path):
-    """Load image and convert to tensor"""
-    from PIL import Image
-    import torchvision.transforms as transforms
+# Load checkpoint if exists
+checkpoint_path = "outputs/checkpoints/epoch_4.pth"
+try:
+    checkpoint = torch.load(checkpoint_path, map_location=DEVICE)
+    image_state = checkpoint.get("image_encoder_state_dict", None)
+    mesh_state = checkpoint.get("mesh_encoder_state_dict", None)
+    if image_state:
+        image_encoder.load_state_dict(image_state, strict=False)
+    if mesh_state:
+        mesh_encoder.load_state_dict(mesh_state, strict=False)
+    print(f"[INFO] Loaded checkpoint from {checkpoint_path}")
+except FileNotFoundError:
+    print("[INFO] No checkpoint found, running inference with random weights.")
 
-    img = Image.open(img_path).convert("RGB")
-    transform = transforms.Compose([
-        transforms.Resize((128, 128)),
-        transforms.ToTensor(),
-    ])
-    img_tensor = transform(img).unsqueeze(0)  # (1, C, H, W)
-    return img_tensor.to(DEVICE)
+# Get one sample
+img_tensor, mesh_tensor = get_sample_image_mesh(device=DEVICE, image_size=(IMG_SIZE, IMG_SIZE), num_points=NUM_POINTS)
 
-# -----------------------------
-# Main
-# -----------------------------
-if __name__ == "__main__":
-    # Initialize models
-    image_encoder = ImageEncoder(latent_dim=LATENT_DIM).to(DEVICE)
-    mesh_encoder = MeshEncoder(latent_dim=LATENT_DIM).to(DEVICE)
+# Forward pass
+with torch.no_grad():
+    img_latent = image_encoder(img_tensor)
+    mesh_latent = mesh_encoder(mesh_tensor)
+    cos_sim = F.cosine_similarity(img_latent, mesh_latent).item()
 
-    # Load checkpoint if exists
-    if os.path.exists(CHECKPOINT_PATH):
-        checkpoint = torch.load(CHECKPOINT_PATH, map_location=DEVICE)
-        print(f"[INFO] Loaded checkpoint from {CHECKPOINT_PATH}")
-
-        # Load state dicts safely (ignore missing/unexpected keys)
-        image_encoder.load_state_dict(checkpoint.get("image_encoder_state_dict", {}), strict=False)
-        mesh_encoder.load_state_dict(checkpoint.get("mesh_encoder_state_dict", {}), strict=False)
-    else:
-        print("[WARN] No checkpoint found. Models are randomly initialized.")
-
-    image_encoder.eval()
-    mesh_encoder.eval()
-
-    # -----------------------------
-    # Prepare data
-    # -----------------------------
-    try:
-        img_tensor = preprocess_image(IMAGE_PATH)
-    except Exception as e:
-        print(f"[WARN] Failed to load image: {e}")
-        img_tensor = torch.rand(1, 3, 128, 128).to(DEVICE)  # fallback dummy image
-
-    try:
-        mesh_points = load_obj_as_pointcloud(MESH_PATH, num_points=NUM_POINTS, normalize=True)
-        mesh_tensor = torch.from_numpy(mesh_points).unsqueeze(0).float().to(DEVICE)  # (1, N, 3)
-    except Exception as e:
-        print(f"[WARN] Failed to load mesh: {e}")
-        mesh_tensor = torch.rand(1, NUM_POINTS, 3).to(DEVICE)  # fallback dummy mesh
-
-    # -----------------------------
-    # Inference
-    # -----------------------------
-    with torch.no_grad():
-        img_latent = image_encoder(img_tensor)
-        mesh_latent = mesh_encoder(mesh_tensor)
-
-        # Cosine similarity
-        cosine_sim = torch.nn.functional.cosine_similarity(img_latent, mesh_latent)
-        print(f"Image latent: {img_latent.shape}")
-        print(f"Mesh latent: {mesh_latent.shape}")
-        print(f"Cosine similarity: {cosine_sim.item():.4f}")
-
-    print("[INFO] Run complete.")
+print(f"Image latent: {img_latent.shape}")
+print(f"Mesh latent: {mesh_latent.shape}")
+print(f"Cosine similarity: {cos_sim:.4f}")
+print("[INFO] Run complete.")

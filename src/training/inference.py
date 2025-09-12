@@ -1,40 +1,66 @@
 # src/training/inference.py
 
+import os
 import torch
+import torch.nn.functional as F
 from src.models.image_encoder import ImageEncoder
 from src.models.mesh_encoder import MeshEncoder
-from src.utils.image_utils import preprocess_image
 from src.utils.mesh_utils import load_obj_as_pointcloud
+from PIL import Image
+import torchvision.transforms as T
 
-device = 'cpu'
+# ========================
+# CONFIG
+# ========================
+CHECKPOINT_PATH = "outputs/checkpoints/epoch_4.pth"
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+NUM_POINTS = 2048
+LATENT_DIM = 128
+
+# ========================
+# UTILS
+# ========================
+transform = T.Compose([
+    T.Resize((128, 128)),
+    T.ToTensor()
+])
+
+def load_image(path):
+    img = Image.open(path).convert("RGB")
+    return transform(img).unsqueeze(0)  # (1,C,H,W)
+
+def load_mesh(path):
+    pc = load_obj_as_pointcloud(path, num_points=NUM_POINTS)
+    return torch.tensor(pc, dtype=torch.float32).unsqueeze(0)  # (1,N,3)
+
+# ========================
+# MODEL
+# ========================
+image_encoder = ImageEncoder(latent_dim=LATENT_DIM).to(DEVICE)
+mesh_encoder = MeshEncoder(latent_dim=LATENT_DIM).to(DEVICE)
 
 # Load checkpoint
-checkpoint_path = "outputs/checkpoints/epoch_4.pth"
-checkpoint = torch.load(checkpoint_path, map_location=device)
-
-# Initialize models
-image_encoder = ImageEncoder(latent_dim=128).to(device)
-mesh_encoder = MeshEncoder(latent_dim=128).to(device)
-
+checkpoint = torch.load(CHECKPOINT_PATH, map_location=DEVICE)
 image_encoder.load_state_dict(checkpoint["image_encoder_state_dict"])
 mesh_encoder.load_state_dict(checkpoint["mesh_encoder_state_dict"])
+
 image_encoder.eval()
 mesh_encoder.eval()
 
-# Example single image & mesh
-img_path = "data/images/img1.png"
-mesh_path = "data/model/bed/bed_0/model.obj"
+# ========================
+# SAMPLE INFERENCE
+# ========================
+img_path = "data/images/bed/0001.png"
+mesh_path = "data/models/bed/bed_0/model.obj"
 
-img_tensor = preprocess_image(img_path, device=device)
-mesh_points = load_obj_as_pointcloud(mesh_path, num_points=1024)
-mesh_tensor = torch.tensor(mesh_points, dtype=torch.float32).unsqueeze(0).to(device)
+img_tensor = load_image(img_path).to(DEVICE)
+mesh_tensor = load_mesh(mesh_path).to(DEVICE)
 
-# Forward pass
 with torch.no_grad():
-    image_latent = image_encoder(img_tensor)
+    img_latent = image_encoder(img_tensor)
     mesh_latent = mesh_encoder(mesh_tensor)
 
-    cos_sim = torch.nn.functional.cosine_similarity(image_latent, mesh_latent)
-    print("Image latent:", image_latent.shape)
-    print("Mesh latent:", mesh_latent.shape)
-    print("Cosine similarity:", cos_sim.item())
+cos_sim = F.cosine_similarity(img_latent, mesh_latent).item()
+print(f"[INFO] Image latent: {img_latent.shape}")
+print(f"[INFO] Mesh latent: {mesh_latent.shape}")
+print(f"[INFO] Cosine similarity: {cos_sim:.4f}")
