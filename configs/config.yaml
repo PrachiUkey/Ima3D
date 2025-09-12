@@ -1,6 +1,56 @@
-data_root: "./data/"
-num_points: 1024
-batch_size: 16
-epochs: 50
-lr: 0.0001
-embedding_dim: 256
+# ==============================
+# Paths
+# ==============================
+paths:
+  data_dir: "data"                   
+  images_dir: "data/images"          
+  masks_dir: "data/masks"            
+  models_dir: "data/models"          
+  checkpoints_dir: "outputs/checkpoints"
+
+# ==============================
+# Image settings
+# ==============================
+image:
+  img_size: 256                      
+  channels: 3                         
+  augmentations: true                 
+
+# ==============================
+# Point cloud / Mesh settings
+# ==============================
+mesh:
+  num_points: 1024                    
+  normalize: true                      
+
+# ==============================
+# Model settings
+# ==============================
+model:
+  latent_dim: 128                      
+  image_encoder_type: "CNN"            
+  mesh_encoder_type: "MLP"             
+
+# ==============================
+# Training settings
+# ==============================
+training:
+  device: "cuda"                       
+  batch_size: 4
+  num_epochs: 10
+  learning_rate: 0.0001
+  save_every: 2                        
+
+# ==============================
+# Loss settings
+# ==============================
+loss:
+  similarity: "cosine"                 
+  weight_reconstruction: 1.0           
+
+# ==============================
+# Inference settings
+# ==============================
+inference:
+  visualize: true                      
+  top_k_matches: 5                     

@@ -1,1 +1,0 @@
-# Paired dataset (image, cad, label)        

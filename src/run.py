@@ -1,44 +1,81 @@
 import torch
-import torch.nn.functional as F
+import os
+import yaml
+from src.dataset.image_mesh_dataset import ImageMeshDataset
 from src.models.image_encoder import ImageEncoder
 from src.models.mesh_encoder import MeshEncoder
-from src.dataset.image_mesh_dataset import get_sample_image_mesh
+from torch.utils.data import DataLoader
+import torch.nn.functional as F
 
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# ==============================
+# Load config
+# ==============================
+with open("configs/config.yaml", "r") as f:
+    cfg = yaml.safe_load(f)
 
-# Parameters
-LATENT_DIM = 128
-IMG_SIZE = 128
-NUM_POINTS = 5000
+# Paths
+DATA_DIR = cfg["paths"]["data_dir"]
+CHECKPOINT_DIR = cfg["paths"]["checkpoints_dir"]
 
+# Image settings
+IMG_SIZE = cfg["image"]["img_size"]
+
+# Mesh settings
+NUM_POINTS = cfg["mesh"]["num_points"]
+
+# Model settings
+LATENT_DIM = cfg["model"]["latent_dim"]
+
+# Training / device
+DEVICE = torch.device(cfg["training"]["device"] if torch.cuda.is_available() else "cpu")
+
+# ==============================
+# Dataset and DataLoader
+# ==============================
+dataset = ImageMeshDataset(
+    data_dir=DATA_DIR,      # pass root folder
+    img_size=IMG_SIZE,
+    num_points=NUM_POINTS
+)
+
+dataloader = DataLoader(dataset, batch_size=1, shuffle=False)
+
+# ==============================
 # Initialize models
-image_encoder = ImageEncoder(latent_dim=LATENT_DIM, img_size=IMG_SIZE).to(DEVICE)
-mesh_encoder = MeshEncoder(num_points=NUM_POINTS, latent_dim=LATENT_DIM).to(DEVICE)
+# ==============================
+image_encoder = ImageEncoder(latent_dim=LATENT_DIM).to(DEVICE)
+mesh_encoder = MeshEncoder(latent_dim=LATENT_DIM).to(DEVICE)
 
-# Load checkpoint if exists
-checkpoint_path = "outputs/checkpoints/epoch_4.pth"
-try:
+# ==============================
+# Load latest checkpoint if available
+# ==============================
+checkpoint_path = os.path.join(CHECKPOINT_DIR, "latest.pth")
+if os.path.exists(checkpoint_path):
     checkpoint = torch.load(checkpoint_path, map_location=DEVICE)
-    image_state = checkpoint.get("image_encoder_state_dict", None)
-    mesh_state = checkpoint.get("mesh_encoder_state_dict", None)
-    if image_state:
-        image_encoder.load_state_dict(image_state, strict=False)
-    if mesh_state:
-        mesh_encoder.load_state_dict(mesh_state, strict=False)
+    image_encoder.load_state_dict(checkpoint.get("image_encoder_state_dict", {}), strict=False)
+    mesh_encoder.load_state_dict(checkpoint.get("mesh_encoder_state_dict", {}), strict=False)
     print(f"[INFO] Loaded checkpoint from {checkpoint_path}")
-except FileNotFoundError:
-    print("[INFO] No checkpoint found, running inference with random weights.")
+else:
+    print("[INFO] No checkpoint found, running with random weights")
 
-# Get one sample
-img_tensor, mesh_tensor = get_sample_image_mesh(device=DEVICE, image_size=(IMG_SIZE, IMG_SIZE), num_points=NUM_POINTS)
+image_encoder.eval()
+mesh_encoder.eval()
 
-# Forward pass
+# ==============================
+# Run inference on first sample
+# ==============================
+sample = dataset[0]
+img_tensor = sample["image"].unsqueeze(0).to(DEVICE)   # add batch dim
+mesh_tensor = sample["points"].unsqueeze(0).to(DEVICE)
+
 with torch.no_grad():
-    img_latent = image_encoder(img_tensor)
+    image_latent = image_encoder(img_tensor)
     mesh_latent = mesh_encoder(mesh_tensor)
-    cos_sim = F.cosine_similarity(img_latent, mesh_latent).item()
 
-print(f"Image latent: {img_latent.shape}")
-print(f"Mesh latent: {mesh_latent.shape}")
-print(f"Cosine similarity: {cos_sim:.4f}")
+    # Cosine similarity
+    similarity = F.cosine_similarity(image_latent, mesh_latent)
+    print(f"Image latent: {image_latent.shape}")
+    print(f"Mesh latent: {mesh_latent.shape}")
+    print(f"Cosine similarity: {similarity.item():.4f}")
+
 print("[INFO] Run complete.")

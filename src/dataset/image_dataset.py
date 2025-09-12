@@ -1,80 +1,60 @@
-"""
-src/data/image_dataset.py
-
-Dataset for loading real-world images with optional binary masks.
-
-Dependencies:
-    pip install torch torchvision Pillow numpy
-"""
-
 import os
-from PIL import Image
-import numpy as np
 import torch
 from torch.utils.data import Dataset
-import torchvision.transforms as T
-
+from PIL import Image
+import numpy as np
 
 class ImageDataset(Dataset):
-    """
-    Dataset for loading images and optional masks.
-    """
-
-    def __init__(self, image_dir: str, mask_dir: str = None, transform=None, split="train", split_ratio=0.8):
+    def __init__(self, img_dir, mask_dir, classes, img_size=(256,256), transform=None):
         """
-        Args:
-            image_dir: path to folder with images
-            mask_dir: path to folder with masks (optional)
-            transform: torchvision transform for preprocessing
-            split: 'train' or 'val'
-            split_ratio: ratio of data used for training
+        Dataset for images and masks
         """
-        self.image_dir = image_dir
+        self.img_dir = img_dir
         self.mask_dir = mask_dir
+        self.classes = classes
+        self.img_size = img_size
         self.transform = transform
 
-        self.files = [f for f in os.listdir(image_dir) if f.lower().endswith((".jpg", ".png", ".jpeg"))]
-        self.files.sort()
-
-        split_idx = int(len(self.files) * split_ratio)
-        if split == "train":
-            self.files = self.files[:split_idx]
-        else:
-            self.files = self.files[split_idx:]
-
-        # Default transform (resize + normalize)
-        if self.transform is None:
-            self.transform = T.Compose([
-                T.Resize((224, 224)),
-                T.ToTensor(),
-                T.Normalize(mean=[0.485, 0.456, 0.406],
-                            std=[0.229, 0.224, 0.225])
-            ])
+        self.samples = []
+        for cls in classes:
+            img_cls_dir = os.path.join(img_dir, cls)
+            mask_cls_dir = os.path.join(mask_dir, cls)
+            img_files = sorted(os.listdir(img_cls_dir))
+            for img_file in img_files:
+                img_id = os.path.splitext(img_file)[0]
+                mask_file = os.path.join(mask_cls_dir, f"{img_id}.png")
+                self.samples.append({
+                    "img": os.path.join(img_cls_dir, img_file),
+                    "mask": mask_file,
+                    "class": cls
+                })
 
     def __len__(self):
-        return len(self.files)
+        return len(self.samples)
 
     def __getitem__(self, idx):
-        filename = self.files[idx]
+        sample = self.samples[idx]
+        # Load image & mask
+        img = Image.open(sample["img"]).convert("RGB").resize(self.img_size)
+        mask = Image.open(sample["mask"]).convert("L").resize(self.img_size)
 
-        # Load image
-        img_path = os.path.join(self.image_dir, filename)
-        image = Image.open(img_path).convert("RGB")
+        if self.transform:
+            img = self.transform(img)
+            mask = self.transform(mask)
+        else:
+            img = np.array(img).astype(np.float32)/255.0
+            mask = np.array(mask).astype(np.float32)/255.0
+            img = torch.from_numpy(img).permute(2,0,1)  # C,H,W
+            mask = torch.from_numpy(mask).unsqueeze(0)  # 1,H,W
+        
+        return img, mask, sample["class"]
 
-        # Apply mask if available
-        if self.mask_dir is not None:
-            mask_path = os.path.join(self.mask_dir, filename)
-            if os.path.exists(mask_path):
-                mask = Image.open(mask_path).convert("L")  # grayscale
-                mask = np.array(mask) > 0
-                image_np = np.array(image)
-                image_np[~mask] = 0
-                image = Image.fromarray(image_np)
-
-        # Transform
-        image = self.transform(image)
-
-        # Label from parent folder (class name)
-        label = os.path.basename(os.path.dirname(img_path))
-
-        return image, label
+# Example usage
+if __name__ == "__main__":
+    dataset = ImageDataset(
+        img_dir="data/img",
+        mask_dir="data/mask",
+        classes=["bed","chair"]
+    )
+    img, mask, cls = dataset[0]
+    print(img.shape, mask.shape, cls)
