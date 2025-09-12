@@ -5,4 +5,4 @@ outputs/
 # Ignore Python cache
 __pycache__/
 *.pyc
-checkpoints/
+checkpoints/*.pth
