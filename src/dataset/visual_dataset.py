@@ -2,7 +2,7 @@ import os
 import trimesh
 from .mesh_dataset import MeshDataset  # relative import
 
-def visualize_and_save(dataset, save_dir="visualized", top_n=5):
+def visualize_and_save(dataset, save_dir="outputs/visualized", top_n=5):
     os.makedirs(save_dir, exist_ok=True)
 
     for idx in range(min(top_n, len(dataset))):
@@ -24,9 +24,9 @@ if __name__ == "__main__":
     # Surface sampled dataset
     dataset_surface = MeshDataset(mesh_dir="data/model", classes=["bed","chair"], num_points=200000, sampling='surface')
     print("Visualizing surface sampled point clouds...")
-    visualize_and_save(dataset_surface, save_dir="visualized_surface", top_n=5)
+    visualize_and_save(dataset_surface, save_dir="outputs/visualized_surface", top_n=5)
 
     # Importance sampled dataset
     dataset_importance = MeshDataset(mesh_dir="data/model", classes=["bed","chair"], num_points=200000, sampling='importance')
     print("Visualizing importance sampled point clouds...")
-    visualize_and_save(dataset_importance, save_dir="visualized_importance", top_n=5)
+    visualize_and_save(dataset_importance, save_dir="outputs/visualized_importance", top_n=5)
