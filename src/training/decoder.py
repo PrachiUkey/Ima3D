@@ -1,12 +1,49 @@
+# src/training/decoder.py
+
+import os
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 
-# --- Encoder from your previous training ---
 from src.training.trainer import ImageEncoder
-# --- Your dataset class ---
-from src.dataset.mesh_dataset import MeshImageDataset  
+from src.dataset.image_dataset import ImageDataset
+from src.dataset.mesh_dataset import MeshDataset
+
+# -----------------------------
+# Paired Dataset
+# -----------------------------
+class PairedDataset(torch.utils.data.Dataset):
+    def __init__(self, img_dataset, mesh_dataset):
+        self.img_dataset = img_dataset
+        self.mesh_dataset = mesh_dataset
+
+        # group meshes by class
+        self.mesh_by_class = {}
+        for i in range(len(mesh_dataset)):
+            points, normals, cls = mesh_dataset[i]
+            if cls not in self.mesh_by_class:
+                self.mesh_by_class[cls] = []
+            self.mesh_by_class[cls].append(points)
+
+        # assign mesh to each image (cycle through available meshes)
+        self.mesh_indices = []
+        for idx in range(len(img_dataset)):
+            cls = img_dataset.samples[idx]["class"]
+            mesh_list = self.mesh_by_class[cls]
+            mesh_idx = idx % len(mesh_list)
+            self.mesh_indices.append(mesh_idx)
+
+    def __len__(self):
+        return len(self.img_dataset)
+
+    def __getitem__(self, idx):
+        img, _, cls = self.img_dataset[idx]
+        mesh_list = self.mesh_by_class[cls]
+        mesh_idx = self.mesh_indices[idx]
+        gt_points = mesh_list[mesh_idx]
+        return img, gt_points
+
 
 # -----------------------------
 # Decoder Model
@@ -42,19 +79,18 @@ def chamfer_distance(pc1, pc2):
 # Training Loop
 # -----------------------------
 def train_decoder(
-    encoder_ckpt="checkpoints/embedding_epoch2.pth",
+    encoder_ckpt="checkpoints/embedding_epoch1.pth",
     num_points=5000,
     epochs=5,
     batch_size=2,
     lr=1e-4,
 ):
-
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print("Using device:", device)
 
     # Load frozen encoder
     encoder = ImageEncoder(latent_dim=256).to(device)
-    encoder.load_state_dict(torch.load(encoder_ckpt, map_location=device))
+    encoder.load_state_dict(torch.load(encoder_ckpt, map_location=device)["image_encoder"])
     encoder.eval()
     for p in encoder.parameters():
         p.requires_grad = False
@@ -65,9 +101,22 @@ def train_decoder(
     # Optimizer
     optimizer = optim.Adam(decoder.parameters(), lr=lr)
 
-    # Dataset
-    dataset = MeshImageDataset(root="data/chairs", num_points=num_points)
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+    # Datasets
+    img_dataset = ImageDataset(
+        img_dir="data/img",
+        mask_dir="data/mask",
+        classes=["bed", "chair"]
+    )
+
+    mesh_dataset = MeshDataset(
+        mesh_dir="data/model",
+        classes=["bed", "chair"],
+        num_points=num_points,
+        sampling="surface"
+    )
+
+    paired_dataset = PairedDataset(img_dataset, mesh_dataset)
+    dataloader = DataLoader(paired_dataset, batch_size=batch_size, shuffle=True)
 
     # Training loop
     for epoch in range(epochs):
@@ -91,6 +140,7 @@ def train_decoder(
         print(f"Epoch {epoch+1}/{epochs}, Loss: {total_loss/len(dataloader):.6f}")
 
         # Save checkpoint
+        os.makedirs("checkpoints", exist_ok=True)
         torch.save(decoder.state_dict(), f"checkpoints/decoder_epoch{epoch+1}.pth")
 
 
