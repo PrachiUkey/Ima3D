@@ -6,7 +6,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 
-from src.training.trainer import ImageEncoder
+from src.training.train_embedding import ImageEncoder
 from src.dataset.image_dataset import ImageDataset
 from src.dataset.mesh_dataset import MeshDataset
 

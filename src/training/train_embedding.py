@@ -1,12 +1,8 @@
-# src/training/trainer.py
-
 import os
 import time
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import Dataset, DataLoader
-from torchvision import transforms
+from torch.utils.data import DataLoader
 
 from src.models.image_encoder import ImageEncoder
 from src.models.mesh_encoder import MeshEncoder
@@ -14,25 +10,32 @@ from src.dataset.image_dataset import ImageDataset
 from src.dataset.mesh_dataset import MeshDataset
 
 # -------------------------
-# Paired dataset for embedding training
+# Paired dataset
 # -------------------------
-class PairedDataset(Dataset):
+class PairedDataset(torch.utils.data.Dataset):
     def __init__(self, img_dataset, mesh_dataset, seed=42):
         self.img_dataset = img_dataset
         self.mesh_dataset = mesh_dataset
 
         # Group meshes by class
         self.mesh_by_class = {}
-        for points, normals, cls in mesh_dataset:
+        for points, cls in mesh_dataset:
+            cls = cls.lower()
             if cls not in self.mesh_by_class:
                 self.mesh_by_class[cls] = []
             self.mesh_by_class[cls].append(points)
+
+        # Check that all image classes exist in meshes
+        img_classes = set([s['class'].lower() for s in img_dataset.samples])
+        missing_classes = img_classes - set(self.mesh_by_class.keys())
+        if missing_classes:
+            raise ValueError(f"Missing meshes for classes: {missing_classes}")
 
         # Precompute mesh assignment per image
         torch.manual_seed(seed)
         self.mesh_indices = []
         for idx in range(len(img_dataset)):
-            cls = img_dataset.samples[idx]['class']
+            cls = img_dataset.samples[idx]['class'].lower()
             mesh_list = self.mesh_by_class[cls]
             mesh_idx = idx % len(mesh_list)
             self.mesh_indices.append(mesh_idx)
@@ -42,6 +45,7 @@ class PairedDataset(Dataset):
 
     def __getitem__(self, idx):
         img, mask, cls = self.img_dataset[idx]
+        cls = cls.lower()
         mesh_list = self.mesh_by_class[cls]
         mesh_idx = self.mesh_indices[idx]
         points = mesh_list[mesh_idx]
@@ -63,44 +67,23 @@ def train_embedding(
     mask_dir="data/mask",
     mesh_dir="data/model",
     latent_dim=256,
-    num_points=100000,    # 1 lakh points
+    num_points=100000,
     batch_size=2,
     epochs=50,
     lr=1e-4,
-    device=None
+    device=None,
+    inference_callback=None
 ):
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
     print("Using device:", device)
 
-    # -------------------------
     # Datasets
-    # -------------------------
-    transform = transforms.Compose([transforms.ToTensor()])
-
-    # Automatically detect all folders as classes
-    classes = [d for d in os.listdir(img_dir) if os.path.isdir(os.path.join(img_dir, d))]
-    print("Detected classes:", classes)
-
-    img_dataset = ImageDataset(
-        img_dir=img_dir,
-        mask_dir=mask_dir,
-        classes=classes,
-        transform=transform
-    )
-
-    mesh_dataset = MeshDataset(
-        mesh_dir=mesh_dir,
-        num_points=num_points,
-        sampling="surface",
-        classes=classes
-    )
-
+    img_dataset = ImageDataset(img_dir, mask_dir, img_size=(256,256))
+    mesh_dataset = MeshDataset(mesh_dir, num_points=num_points, sampling="surface")
     paired_dataset = PairedDataset(img_dataset, mesh_dataset)
     dataloader = DataLoader(paired_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
 
-    # -------------------------
     # Models
-    # -------------------------
     image_encoder = ImageEncoder(embed_dim=latent_dim).to(device)
     mesh_encoder = MeshEncoder(embed_dim=latent_dim).to(device)
 
@@ -111,12 +94,12 @@ def train_embedding(
 
     os.makedirs("checkpoints", exist_ok=True)
 
-    # -------------------------
     # Training loop
-    # -------------------------
     for epoch in range(epochs):
         start_time = time.time()
         total_loss = 0
+        image_encoder.train()
+        mesh_encoder.train()
 
         for step, (img, points, cls) in enumerate(dataloader):
             img = img.to(device)
@@ -134,12 +117,12 @@ def train_embedding(
             total_loss += loss.item()
 
             if (step + 1) % 10 == 0:
-                print(f"Epoch {epoch+1}/{epochs} Step {step+1}/{len(dataloader)} - Loss: {loss.item():.6f}")
+                print(f"Epoch {epoch+1}/{epochs} Step {step+1}/{len(dataloader)} Loss: {loss.item():.6f}")
 
         avg_loss = total_loss / len(dataloader)
         print(f"Epoch {epoch+1}/{epochs} completed in {time.time()-start_time:.2f}s - Avg Loss: {avg_loss:.6f}")
 
-        # Save checkpoint every epoch
+        # Save checkpoint
         torch.save({
             'image_encoder': image_encoder.state_dict(),
             'mesh_encoder': mesh_encoder.state_dict(),
@@ -147,10 +130,6 @@ def train_embedding(
             'epoch': epoch
         }, f"checkpoints/embedding_epoch{epoch+1}.pth")
 
-
-# -------------------------
-# Main
-# -------------------------
-if __name__ == "__main__":
-    train_embedding()
-
+        # Run inference every 5 epochs
+        if inference_callback and (epoch + 1) % 5 == 0:
+            inference_callback(image_encoder, mesh_encoder, mesh_dataset, device, epoch)

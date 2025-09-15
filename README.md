@@ -69,3 +69,33 @@ project_root/
 │
 │── requirements.txt
 │── README.md
+
+
+data/
+├─ img/
+│  ├─ bed/
+│  │  ├─ 0001.png
+│  │  ├─ 0002.png
+│  │  └─ ...
+│  ├─ chair/
+│  │  ├─ 0001.png
+│  │  └─ ...
+│  └─ ...
+├─ mask/
+│  ├─ bed/
+│  │  ├─ 0001.png
+│  │  ├─ 0002.png
+│  │  └─ ...
+│  ├─ chair/
+│  │  ├─ 0001.png
+│  │  └─ ...
+│  └─ ...
+├─ model/
+│  ├─ bed/
+│  │  ├─ bed_0/model.obj
+│  │  ├─ bed_1/model.obj
+│  │  └─ ...
+│  ├─ chair/
+│  │  ├─ chair_0/model.obj
+│  │  └─ ...
+│  └─ ...
