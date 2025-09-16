@@ -10,33 +10,33 @@ from src.dataset.image_dataset import ImageDataset
 from src.dataset.mesh_dataset import MeshDataset
 
 # -------------------------
-# Paired dataset
+# Paired dataset (subclass-aware)
 # -------------------------
 class PairedDataset(torch.utils.data.Dataset):
     def __init__(self, img_dataset, mesh_dataset, seed=42):
         self.img_dataset = img_dataset
         self.mesh_dataset = mesh_dataset
 
-        # Group meshes by class
-        self.mesh_by_class = {}
-        for points, cls in mesh_dataset:
+        # Group meshes by subclass
+        self.mesh_by_subclass = {}
+        for points, cls in mesh_dataset:  # cls is like "chair_0"
             cls = cls.lower()
-            if cls not in self.mesh_by_class:
-                self.mesh_by_class[cls] = []
-            self.mesh_by_class[cls].append(points)
+            if cls not in self.mesh_by_subclass:
+                self.mesh_by_subclass[cls] = []
+            self.mesh_by_subclass[cls].append(points)
 
-        # Check that all image classes exist in meshes
+        # Check all image classes exist
         img_classes = set([s['class'].lower() for s in img_dataset.samples])
-        missing_classes = img_classes - set(self.mesh_by_class.keys())
-        if missing_classes:
-            raise ValueError(f"Missing meshes for classes: {missing_classes}")
+        missing = img_classes - set(self.mesh_by_subclass.keys())
+        if missing:
+            raise ValueError(f"Missing meshes for subclasses: {missing}")
 
-        # Precompute mesh assignment per image
+        # Precompute assignments
         torch.manual_seed(seed)
         self.mesh_indices = []
         for idx in range(len(img_dataset)):
-            cls = img_dataset.samples[idx]['class'].lower()
-            mesh_list = self.mesh_by_class[cls]
+            cls = img_dataset.samples[idx]['class'].lower()  # subclass label
+            mesh_list = self.mesh_by_subclass[cls]
             mesh_idx = idx % len(mesh_list)
             self.mesh_indices.append(mesh_idx)
 
@@ -44,20 +44,21 @@ class PairedDataset(torch.utils.data.Dataset):
         return len(self.img_dataset)
 
     def __getitem__(self, idx):
-        img, mask, cls = self.img_dataset[idx]
+        img, mask, cls = self.img_dataset[idx]  # cls must be subclass
         cls = cls.lower()
-        mesh_list = self.mesh_by_class[cls]
+        mesh_list = self.mesh_by_subclass[cls]
         mesh_idx = self.mesh_indices[idx]
         points = mesh_list[mesh_idx]
         return img, points, cls
 
 # -------------------------
-# Cosine embedding loss
+# Triplet loss
 # -------------------------
-def embedding_loss(img_embed, mesh_embed):
-    sim = F.cosine_similarity(img_embed, mesh_embed)
-    loss = 1 - sim.mean()
-    return loss
+def triplet_loss(anchor, positive, negative, margin=0.2):
+    pos_dist = 1 - F.cosine_similarity(anchor, positive)
+    neg_dist = 1 - F.cosine_similarity(anchor, negative)
+    losses = F.relu(pos_dist - neg_dist + margin)
+    return losses.mean()
 
 # -------------------------
 # Training function
@@ -66,7 +67,7 @@ def train_embedding(
     img_dir="data/img",
     mask_dir="data/mask",
     mesh_dir="data/model",
-    latent_dim=256,
+    latent_dim=512,  # bump up embedding dim
     num_points=100000,
     batch_size=2,
     epochs=50,
@@ -78,8 +79,8 @@ def train_embedding(
     print("Using device:", device)
 
     # Datasets
-    img_dataset = ImageDataset(img_dir, mask_dir, img_size=(256,256))
-    mesh_dataset = MeshDataset(mesh_dir, num_points=num_points, sampling="surface")
+    img_dataset = ImageDataset(img_dir, mask_dir, img_size=(256,256), subclass_level=True)
+    mesh_dataset = MeshDataset(mesh_dir, num_points=num_points, sampling="surface", subclass_level=True)
     paired_dataset = PairedDataset(img_dataset, mesh_dataset)
     dataloader = DataLoader(paired_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
 
@@ -108,7 +109,15 @@ def train_embedding(
             img_embed = image_encoder(img)
             mesh_embed = mesh_encoder(points)
 
-            loss = embedding_loss(img_embed, mesh_embed)
+            # --- pick a negative from a different subclass ---
+            neg_cls = torch.choice(list(paired_dataset.mesh_by_subclass.keys()))
+            while neg_cls == cls[0].lower():  # avoid same subclass
+                neg_cls = torch.choice(list(paired_dataset.mesh_by_subclass.keys()))
+            neg_points = paired_dataset.mesh_by_subclass[neg_cls][0].to(device)
+            neg_embed = mesh_encoder(neg_points.unsqueeze(0))
+
+            # Triplet loss
+            loss = triplet_loss(img_embed, mesh_embed, neg_embed)
 
             optimizer.zero_grad()
             loss.backward()
