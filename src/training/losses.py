@@ -1,1 +1,0 @@
-# Triplet, contrastive, etc.
