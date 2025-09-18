@@ -1,50 +1,38 @@
 import os
-import torch
-from torch.utils.data import Dataset
 from PIL import Image
-import torchvision.transforms as transforms
+from torch.utils.data import Dataset
 
 class ImageDataset(Dataset):
-    def __init__(self, img_dir, mask_dir=None, img_size=(256, 256), subclass_level=False):
-        self.img_dir = img_dir
-        self.mask_dir = mask_dir
-        self.img_size = img_size
-        self.subclass_level = subclass_level
+    def __init__(self, root_dir, transform=None):
+        """
+        Args:
+            root_dir (str): Directory with coarse class folders (e.g. bed, chair)
+            transform: Torchvision transforms for images
+        """
+        self.root_dir = root_dir
+        self.transform = transform
+        self.image_paths, self.labels = self._load_images()
 
-        # Collect samples
-        self.samples = []
-        for class_name in os.listdir(img_dir):
-            class_path = os.path.join(img_dir, class_name)
+    def _load_images(self):
+        image_paths, labels = [], []
+        for coarse_class in os.listdir(self.root_dir):
+            class_path = os.path.join(self.root_dir, coarse_class)
             if not os.path.isdir(class_path):
                 continue
-
             for fname in os.listdir(class_path):
-                if fname.lower().endswith(('.jpg', '.png', '.jpeg')):
-                    img_path = os.path.join(class_path, fname)
-
-                    if subclass_level:
-                        # Use filename (without extension) as subclass label
-                        subclass_name = os.path.splitext(fname)[0].lower()
-                        label = f"{class_name.lower()}_{subclass_name}"
-                    else:
-                        label = class_name.lower()
-
-                    self.samples.append({
-                        "img": img_path,
-                        "mask": None,
-                        "class": label
-                    })
-
-        self.transform = transforms.Compose([
-            transforms.Resize(img_size),
-            transforms.ToTensor()
-        ])
+                if fname.lower().endswith((".png", ".jpg", ".jpeg")):
+                    image_paths.append(os.path.join(class_path, fname))
+                    labels.append(coarse_class)  # only coarse class
+        print(f"[ImageDataset] Loaded {len(image_paths)} images from {self.root_dir}")
+        return image_paths, labels
 
     def __len__(self):
-        return len(self.samples)
+        return len(self.image_paths)
 
     def __getitem__(self, idx):
-        sample = self.samples[idx]
-        img = Image.open(sample["img"]).convert("RGB")
-        img = self.transform(img)
-        return img, sample["mask"], sample["class"]
+        img_path = self.image_paths[idx]
+        label = self.labels[idx]  # coarse label
+        image = Image.open(img_path).convert("RGB")
+        if self.transform:
+            image = self.transform(image)
+        return image, label

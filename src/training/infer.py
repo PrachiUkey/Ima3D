@@ -179,7 +179,7 @@ def run_debug_inference(
 # -------------------------
 if __name__ == "__main__":
     # Edit these variables directly
-    image_path = os.path.join("data", "img", "chair", "0071.png")  # set image you want
+    image_path = os.path.join("data", "img", "test", "download.jpg")  # set image you want
     checkpoint_path = os.path.join("checkpoints", "embedding_epoch11.pth")  # correct checkpoint
     mesh_dir = os.path.join("data", "model")
     device = None  # None -> auto pick
