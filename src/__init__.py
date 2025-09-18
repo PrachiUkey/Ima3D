@@ -1,1 +1,0 @@
-# To make a directory behave like a package.
